@@ -1,0 +1,1778 @@
+# Project doc
+
+## data
+```{R}
+ds <- read.csv("DataCommon.csv")
+ds <- ds |> dplyr::select(-c('X'))
+View(ds)
+ds
+```
+## libs
+```{R}
+library(broom)
+library(RColorBrewer)
+library(reshape2)
+library(caret)
+library(rsample)
+library(scales)
+library(vip)
+library(leaps)
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+library(ggthemes)
+library(lmtest)
+library(MASS)
+library(faraway)
+library(glmnet)
+library(party)
+library(relaimpo)
+library(varImp)
+library(earth)
+library(Boruta)
+library(devtools)
+library(InformationValue)
+library(grid)
+library(gridExtra)
+library(egg)
+```
+
+# prep and split
+```{R}
+set.seed(123)
+ds_m <- ds |> dplyr::filter(year < 2010 & year > 1960)
+
+split_ds <- initial_split(ds_m, prop = 0.7)
+ds_train <- training(split_ds)
+ds_test <- testing(split_ds)
+```
+
+## funcs
+```{R}
+RMSE <- function(error) { sqrt(mean(error^2)) }
+MSE <- function(error) { mean(error^2) }
+MAE <- function(error) { mean(abs(error)) }
+error_metrics <- function(error) { 
+  df <- as.data.frame(nm="value", row.names = c("RMSE", "MSE", "MAE"), c(RMSE(error),
+  MSE(error),
+  MAE(error)
+  ))
+  df
+}
+```
+
+## model 1
+```{R}
+ds_model1 <- lm(sea_level ~ temp, data = ds_train)
+error_metrics(resid(ds_model1))
+sigma(ds_model1)
+
+### ASSESSING MODEL ACCURACY (cv)###
+set.seed(123)
+(ds_cv_model1 <- train(
+  form = sea_level ~ temp,
+  data = ds_train,
+  method = 'lm',
+  trControl = trainControl(method = 'cv', number = 10)
+))
+```
+
+## model 2
+```{R}
+ds_model2 <- lm(sea_level ~ temp + co2_emiss, data = ds_train)
+error_metrics(resid(ds_model2))
+sigma(ds_model2)
+
+### ASSESSING MODEL ACCURACY (cv)###
+set.seed(123)
+(ds_cv_model2 <- train(
+  form = sea_level ~ temp + co2_emiss,
+  data = ds_train,
+  method = 'lm',
+  trControl = trainControl(method = 'cv', number = 10)
+))
+```
+
+## model 3
+```{R}
+ds_model3 <- lm(sea_level ~ temp + co2_emiss + urb_pc + oc_h_anom + water_cons + elnino_anom_c, data = ds_train)
+error_metrics(resid(ds_model3))
+sigma(ds_model3)
+
+### ASSESSING MODEL ACCURACY ###
+set.seed(123)
+(ds_cv_model3 <- train(
+  form = sea_level ~ temp + co2_emiss + urb_pc + oc_h_anom + water_cons + elnino_anom_c,
+  data = ds_train,
+  method = 'lm',
+  trControl = trainControl(method = 'cv', number = 10),
+  na.action=na.omit
+))
+vip(ds_cv_model3)
+```
+
+## reducing features
+```{R}
+ds_train_red <- ds_train |> dplyr::select(-c(
+  # 'X',
+   'year','ch4', 'n2o', 'sf6', 'l_ice_mass_anom' ))
+ds_train_red_red <- ds_train_red |> dplyr::select(-c('co2', 's_ice_ext_anom', 'total' ))
+
+ds_test_red <- ds_test |> dplyr::select(-c(
+  # 'X', 
+'year','ch4', 'n2o', 'sf6', 'l_ice_mass_anom' ))
+ds_test_red_red <- ds_test_red |> dplyr::select(-c('co2', 's_ice_ext_anom' ))
+```
+
+## edge models
+```{R}
+ds_model_0 <- lm(sea_level ~ 1, data = ds_train_red)
+ds_model_all <- lm(sea_level ~ ., data = ds_train_red)
+ds_model_all_red <- lm(sea_level ~ ., data = ds_train_red_red)
+
+```
+
+## STEP MODELS
+
+## forward AIC model
+```{R}
+n = length(resid(ds_model_all_red))
+ds_model_fwd_aic = step(
+  ds_model_0,
+  scope=formula(ds_model_all_red),
+  direction = "forward")
+error_metrics(resid(ds_model_fwd_aic))
+summary(ds_model_fwd_aic)
+vip(ds_model_fwd_aic)
+```
+## forward BIC model
+```{R}
+n = length(resid(ds_model_all_red))
+ds_model_fwd_bic = step(
+  ds_model_0,
+  scope=formula(ds_model_all_red),
+  direction = "forward", k = log(n))
+error_metrics(resid(ds_model_fwd_bic))
+summary(ds_model_fwd_bic)
+vip(ds_model_fwd_bic)
+```
+
+## back AIC model
+```{R}
+n = length(resid(ds_model_all))
+ds_model_back_aic = step(
+  ds_model_all,
+  direction = "back")
+error_metrics(resid(ds_model_back_aic))
+summary(ds_model_back_aic)
+vip(ds_model_back_aic)
+```
+## back BIC model
+```{R}
+n = length(resid(ds_model_all))
+ds_model_back_bic = step(
+  ds_model_all,
+  direction = "back", k = log(n))
+error_metrics(resid(ds_model_back_bic))
+summary(ds_model_back_bic)
+vip(ds_model_back_bic)
+```
+
+## both AIC model
+```{R}
+n = length(resid(ds_model_all_red))
+ds_model_both_aic = step(
+  ds_model_0,
+  scope=formula(ds_model_all_red),
+  direction = "both")
+error_metrics(resid(ds_model_both_aic))
+summary(ds_model_both_aic)
+vip(ds_model_both_aic)
+```
+## both BIC model
+```{R}
+n = length(resid(ds_model_all_red))
+ds_model_both_bic = step(
+  ds_model_0,
+  scope=formula(ds_model_all_red), 
+  direction = "both", k = log(n))
+error_metrics(resid(ds_model_both_bic))
+summary(ds_model_both_bic)
+vip(ds_model_both_bic)
+```
+
+## find model
+```{R}
+all_ds_mod = summary(regsubsets(sea_level ~ ., data = ds_train_red))
+all_ds_mod$which
+all_ds_mod$adjr2
+all_ds_mod$rss
+
+p = length(coef(ds_model_all))
+n = length(resid(ds_model_all))
+```
+
+## model best r2
+```{R}
+(best_r2_ind = which.max(all_ds_mod$adjr2))
+all_ds_mod$which[best_r2_ind,]
+ds_model_best_r2 = lm(sea_level ~ temp + water_cons + co2 + urb_pc + oc_h_anom + elnino_anom_c, data = ds_train_red)
+error_metrics(resid(ds_model_best_r2))
+summary(ds_model_best_r2)
+vip(ds_model_best_r2)
+
+### ASSESSING MODEL ACCURACY ###
+set.seed(123)
+(ds_cv_model_best_r2 <- train(
+  form = sea_level ~ temp + water_cons + co2 + urb_pc + oc_h_anom + elnino_anom_c,
+  data = ds_train_red,
+  method = 'lm',
+  trControl = trainControl(method = 'cv', number = 10),
+  na.action=na.omit
+))
+vip(ds_cv_model_best_r2)
+```
+
+## model best aic
+```{R}
+ds_mod_aic = n * log(all_ds_mod$rss / n) + 2 * (2:p)
+best_aic_ind = which.min(ds_mod_aic)
+all_ds_mod$which[best_aic_ind,]
+ds_model_best_aic = lm(sea_level ~ temp + water_cons + co2 + urb_pc, ds_train_red)
+error_metrics(resid(ds_model_best_aic))
+summary(ds_model_best_aic)
+vip(ds_model_best_aic)
+
+### ASSESSING MODEL ACCURACY ###
+set.seed(123)
+(ds_cv_model_best_aic <- train(
+  form = sea_level ~ temp + water_cons + co2 + urb_pc,
+  data = ds_train_red,
+  method = 'lm',
+  trControl = trainControl(method = 'cv', number = 10),
+  na.action=na.omit
+))
+vip(ds_cv_model_best_aic)
+```
+
+## model best bic
+```{R}
+ds_mod_bic = n * log(all_ds_mod$rss / n) + log(n) * (2:p)
+best_bic_ind = which.min(ds_mod_bic)
+all_ds_mod$which[best_bic_ind,]
+ds_model_best_bic = lm(sea_level ~ water_cons + co2 + urb_pc, ds_train_red)
+error_metrics(resid(ds_model_best_bic))
+summary(ds_model_best_bic)
+vip(ds_model_best_bic)
+
+### ASSESSING MODEL ACCURACY ###
+set.seed(123)
+(ds_cv_model_best_bic <- train(
+  form = sea_level ~ water_cons + co2 + urb_pc,
+  data = ds_train_red,
+  method = 'lm',
+  trControl = trainControl(method = 'cv', number = 10),
+  na.action=na.omit
+))
+vip(ds_cv_model_best_bic)
+```
+
+## model big
+```{R}
+View(ds_train_red_red)
+ds_big_mod <- lm(
+  sea_level ~ .^2 + log(water_cons) + log(urb_pc) + I(oc_h_anom^3),
+  data = ds_train_red_red
+)
+summary(ds_big_mod)
+```
+
+## model regularization
+```{R}
+ds_big_mod <- lm(
+  log(sea_level) ~ .^2 + log(water_cons) + log(urb_pc) + I(oc_h_anom^3),
+  data = ds_train_red_red
+)
+coef(ds_big_mod)
+sum(abs(coef(ds_big_mod)[-1]))
+sum(coef(ds_big_mod)[-1]^2)
+X = model.matrix(formula(ds_big_mod), ds_train_red_red)[, -1]
+y = log(ds_train_red_red$sea_level)
+y
+summary(ds_big_mod)
+```
+
+### RIDGE
+```{R}
+par(mfrow = c(1, 2))
+fit_ridge = glmnet(X, y, alpha = 0)
+plot(fit_ridge)
+plot(fit_ridge, xvar = "lambda", label = TRUE)
+
+fit_ridge_cv = cv.glmnet(X, y, alpha = 0)
+plot(fit_ridge_cv)
+
+coef(fit_ridge_cv)
+coef(fit_ridge_cv, s = "lambda.min")
+
+sum(coef(fit_ridge_cv, s = "lambda.min")[-1] ^ 2)
+coef(fit_ridge_cv, s = "lambda.1se")
+
+predict(fit_ridge_cv, X, s = "lambda.min")
+y_hat = predict(fit_ridge_cv, X, s = "lambda.min")
+SST   = sum((y - mean(y)) ^ 2)
+SSReg = sum((y_hat - mean(y)) ^ 2)
+SSE   = sum((y - y_hat) ^ 2)
+s2 = SSE / (length(y) - 2)
+R2 = SSReg / SST
+c(SST = SST, SSReg = SSReg, SSE = SSE, s2 = s2, R2 = R2)
+
+mean((y - predict(fit_ridge_cv, X)) ^ 2)
+mean((y - predict(fit_ridge_cv, X, s = "lambda.min")) ^ 2)
+
+sqrt(fit_ridge_cv$cvm)
+sqrt(fit_ridge_cv$cvm[fit_ridge_cv$lambda == fit_ridge_cv$lambda.min])
+sqrt(fit_ridge_cv$cvm[fit_ridge_cv$lambda == fit_ridge_cv$lambda.1se])
+
+shapiro.test(exp(y) - exp(predict(fit_ridge_cv, X, s = "lambda.min")))
+shapiro.test(exp(y) - exp(predict(fit_ridge_cv, X)))
+```
+
+### LASSO
+```{R}
+par(mfrow = c(1, 2))
+fit_lasso = glmnet(X, y, alpha = 1)
+plot(fit_lasso)
+plot(fit_lasso, xvar = "lambda", label = TRUE)
+
+fit_lasso_cv = cv.glmnet(X, y, alpha = 1)
+plot(fit_lasso_cv)
+
+coef(fit_lasso_cv)
+
+coef(fit_lasso_cv, s = "lambda.min")
+sum(coef(fit_lasso_cv, s = "lambda.min")[-1] ^ 2)
+
+coef(fit_lasso_cv, s = "lambda.1se") # == coef(fit_lasso_cv)
+sum(coef(fit_lasso_cv)[-1] ^ 2)
+
+predict(fit_lasso_cv, X, s = "lambda.min")
+mean((y - predict(fit_lasso_cv, X, s = "lambda.min")))
+
+predict(fit_lasso_cv, X)
+mean((y - predict(fit_lasso_cv, X)))
+
+mean(resid(ds_big_mod))
+bptest(ds_big_mod)
+shapiro.test(exp(y) - exp(predict(fit_lasso_cv, X, s = "lambda.min")))
+shapiro.test(exp(y) - exp(predict(fit_lasso_cv, X)))
+shapiro.test(resid(ds_big_mod))
+
+predict(fit_lasso_cv, X, s = "lambda.min")
+y_hat = predict(fit_lasso_cv, X, s = "lambda.min")
+SST   = sum((y - mean(y)) ^ 2)
+SSReg = sum((y_hat - mean(y)) ^ 2)
+SSE   = sum((y - y_hat) ^ 2)
+s2 = SSE / (length(y) - 2)
+R2 = SSReg / SST
+c(SST = SST, SSReg = SSReg, SSE = SSE, s2 = s2, R2 = R2)
+
+view(ds_train_red)
+formula(ds_model_best_bic)
+y_hat = predict(ds_cv_model_best_bic, ds_train_red, s = "lambda.min")
+y = (ds_train_red |> dplyr::filter(!is.na(co2)))$sea_level
+y
+y_hat
+SST   = sum((y - mean(y)) ^ 2)
+SSReg = sum((y_hat - mean(y)) ^ 2)
+SSE   = sum((y - y_hat) ^ 2)
+s2 = SSE / (length(y) - 2)
+R2 = SSReg / SST
+c(SST = SST, SSReg = SSReg, SSE = SSE, s2 = s2, R2 = R2)
+```
+
+## TEST PENALIZED REGRESSIONS
+```{R}
+ds_graph <- ds_train_red_red
+ds_graph$pred <- exp(predict(fit_ridge_cv, X, s = "lambda.min"))
+ds_graph$res <- ds_graph$sea_level - ds_graph$pred 
+
+p2 <- ggplot(ds_graph, aes(pred, res)) +
+  geom_point(size = 3, alpha = .6) +
+  geom_smooth(method="lm") +
+  geom_line(aes(y=0)) +
+  xlab('Predicted values') +
+  ylab('Residuals') +
+  # ggtitle('Model lasso')+
+    theme(axis.title = element_text(size = 18), axis.text = element_text(size = 14), plot.title = element_text(size = 20, face = "bold"))
+p2
+ggsave("Res_vs_pred.png")
+p2 <- ds_graph |> ggplot() + 
+  geom_histogram(aes(res),bins=20, color="green") + 
+  geom_density(aes(res),color='green', lwd=3)+
+  xlab('Residuals distribution') +
+  # ggtitle('Model lasso test')
+  theme(axis.title = element_text(size = 18), axis.text = element_text(size = 14), plot.title = element_text(size = 20, face = "bold"))
+p2
+ggsave("Res_distr.png")
+
+qqnorm(ds_graph$res, cex =3, main="",cex.lab=2.5,cex.axis=1.5, pch = 21, bg="grey", col = "black")
+qqline(ds_graph$res, lty = 3, lwd = 5, col = "dodgerblue")
+
+`
+ds_graph$year <- ds_train$year
+p2 <- ds_graph |> ggplot(aes(year)) + 
+  geom_line(aes(y=sea_level), color="green", lwd=2) + 
+  geom_jitter(aes(y=pred), color="red", size=4, alpha=0.5) + 
+  xlab('Year') +
+  ylab('Sea level') +
+  # ggtitle('Model lasso test')
+  theme(axis.title = element_text(size = 18), axis.text = element_text(size = 14), plot.title = element_text(size = 20, face = "bold"))
+p2
+ggsave("Final_graph.png")
+
+```
+## CHECK ON TEST DATA
+```{R}
+Xt = model.matrix(formula(ds_big_mod), ds_test_red_red)[, -1]
+ds_graph <- ds_test_red_red
+ds_graph$pred <- exp(predict(fit_ridge_cv, Xt, s = "lambda.min"))
+ds_graph$res <- ds_graph$sea_level - ds_graph$pred
+
+ds_graph$year <- ds_test$year
+p2 <- ds_graph |> ggplot(aes(year)) + 
+  geom_point(aes(y=sea_level), color="green", size=5) + 
+  geom_jitter(aes(y=pred), color="red", size=5, alpha=0.5) + 
+  xlab('Year') +
+  ylab('Sea level') +
+  theme(axis.title = element_text(size = 18), axis.text = element_text(size = 14), plot.title = element_text(size = 20, face = "bold"))
+p2
+ggsave("Fimal_test.png")
+```
+
+## find model big 
+```{R}
+all_ds_mod_big = summary(regsubsets(formula(ds_big_mod), data = ds_train_red_red, nvmax=NULL))
+pb = length(coef(ds_big_mod))
+nb = length(resid(ds_big_mod))
+
+all_ds_mod_big$which
+all_ds_mod_big$adjr2
+all_ds_mod_big$rss
+```
+
+## model big best r2
+```{R}
+(best_big_r2_ind = which.max(all_ds_mod_big$adjr2))
+all_ds_mod_big$which[best_big_r2_ind,]
+ds_model_big_best_r2 <- lm(log(sea_level) ~ temp + water_cons + urb_pc + oc_h_anom + log(water_cons) + I(oc_h_anom^3) + 
+                                temp:oc_h_anom + temp:elnino_anom_c + temp:co2_emiss + water_cons:urb_pc + water_cons:co2_emiss + 
+                                urb_pc:elnino_anom_c + oc_h_anom:co2_emiss + elnino_anom_c:co2_emiss,               
+data = ds_train_red_red)
+summary(ds_model_big_best_r2)
+vip(ds_model_big_best_r2)
+
+### ASSESSING MODEL ACCURACY ###
+set.seed(123)
+(ds_cv_model_big_best_r2 <- train(
+  form = formula(ds_model_big_best_r2),
+  data = ds_train_red_red,
+  method = 'lm',
+  trControl = trainControl(method = 'cv', number = 10),
+  na.action=na.omit
+))
+vip(ds_cv_model_big_best_r2)
+```
+
+## model best aic
+```{R}
+ds_mod_big_aic = nb * log(all_ds_mod_big$rss / nb) + 2 * (2:pb)
+(best_big_aic_ind = which.min(ds_mod_big_aic))
+all_ds_mod_big$which[best_big_aic_ind,]
+ds_model_big_best_aic <- lm(log(sea_level) ~ temp + water_cons + urb_pc + oc_h_anom + log(water_cons) + I(oc_h_anom^3) + 
+                                temp:oc_h_anom + temp:elnino_anom_c + temp:co2_emiss + water_cons:urb_pc + water_cons:co2_emiss + 
+                                urb_pc:elnino_anom_c + oc_h_anom:co2_emiss + elnino_anom_c:co2_emiss,               
+data = ds_train_red_red)
+# ds_model_big_best_aic <- lm(log(sea_level) ~ temp + water_cons + urb_pc + log(water_cons) + log(urb_pc) + 
+#                                 temp:water_cons + temp:oc_h_anom + temp:co2_emiss + temp:year + water_cons:urb_pc + water_cons:co2_emiss + 
+#                                 urb_pc:year + oc_h_anom:year,               
+# data = ds_train_red_red)
+summary(ds_model_big_best_aic)
+vip(ds_model_best_aic)
+
+### ASSESSING MODEL ACCURACY ###
+set.seed(123)
+(ds_cv_model_big_best_aic <- train(
+  form = formula(ds_model_big_best_aic),
+  data = ds_train_red_red,
+  method = 'lm',
+  trControl = trainControl(method = 'cv', number = 10),
+  na.action=na.omit
+))
+vip(ds_cv_model_big_best_aic)
+```
+
+## model best bic
+```{R}
+(best_big_bic_ind = which.min(all_ds_mod_big$bic))
+all_ds_mod_big$which[best_big_bic_ind,]
+ds_model_big_best_bic <- lm(log(sea_level) ~ elnino_anom_c + temp:urb_pc + urb_pc:co2_emiss + oc_h_anom:elnino_anom_c + elnino_anom_c:co2_emiss, 
+data = ds_train_red_red)
+summary(ds_model_big_best_bic)
+vip(ds_model_big_best_bic)
+
+### ASSESSING MODEL ACCURACY ###
+set.seed(123)
+(ds_cv_model_big_best_bic <- train(
+  form = formula(ds_model_big_best_bic),
+  data = ds_train_red_red,
+  method = 'lm',
+  trControl = trainControl(method = 'cv', number = 10),
+  na.action=na.omit
+))
+vip(ds_cv_model_big_best_bic)
+```
+
+# Rand forest
+```{R}
+
+cf1 <- cforest(sea_level ~ . , data = (ds_train |> dplyr::select(-year)), control=cforest_unbiased(mtry=2,ntree=50))
+cf1 <- cforest(sea_level ~ . , data = ds_train_red_red, control=cforest_unbiased(mtry=2,ntree=50))
+vect <- varimp(cf1)
+vect <- varimp(cf1, conditional=TRUE)
+View(vect)
+a <- cbind(read.table(text = names(vect)), V3 = vect)
+a |> ggplot(aes(y=V3, x=factor(V1))) + stat_summary_bin(geom="bar") +
+ylab("importance")+
+xlab("parametr")+
+  theme(axis.title = element_text(size = 18), axis.text = element_text(size = 14), axis.text.x = element_text(angle = 90), plot.title = element_text(size = 20, face = "bold"))
+ggsave("F_importance.png")
+# varimpAUC(cf1) for categorical target
+
+lmMod <- lm(sea_level ~ co2_emiss , data = ds_train_red)  # fit lm() model
+summary(lmMod)
+relImportance <- calc.relimp(lmMod, type = "lmg", rela = TRUE, na.action="NULL")  # calculate relative importance scaled to 100
+sort(relImportance$lmg, decreasing=TRUE)  # relative importance
+plot(relImportance)
+ggsave("F_importance.png")
+boot_rel <- boot.relimp(lmMod, type = "lmg", 
+                        nboot = 1000)
+ 
+boot_eval <- booteval.relimp(boot_rel)
+plot(boot_eval)
+
+
+lModel <- earth(sea_level ~ ., data=ds_train_red_red) # build model
+ev <- evimp (lModel) # estimate variable importance
+plot(ev)
+
+
+boruta_output <- Boruta(sea_level ~ ., data=na.omit(ds_train_red), doTrace=2) 
+boruta_signif <- names(boruta_output$finalDecision[boruta_output$finalDecision %in% c("Confirmed", "Tentative")])
+print(boruta_signif)
+plot(boruta_output, cex.axis=.7, las=2, xlab="", main="Variable Importance") 
+```
+## control
+```{R}
+summary(resamples(list(
+  model1=ds_cv_model1,
+  model2=ds_cv_model2,
+  model3=ds_cv_model3,
+  model4=ds_cv_model_best_r2,
+  model5=ds_cv_model_best_aic,
+  model6=ds_cv_model_best_bic,
+  model7=ds_cv_model_big_best_r2,
+  model8=ds_cv_model_big_best_aic,
+  model9=ds_cv_model_big_best_bic
+)))
+ds_model_antro = lm(sea_level ~ co2_emiss + urb_pc + water_cons, data=ds_train)
+ds_model_antro_2 = lm(sea_level ~ temp + co2_emiss + urb_pc, data=ds_train)
+summary(ds_model_antro)
+vif(ds_model_antro_2)
+anova(
+  ds_model1,
+  ds_model2,
+  ds_model3
+# ds_model_best_r2,
+# ds_model_best_aic,
+# ds_model_best_bic
+)
+# anova(ds_model1, ds_model2)
+```
+
+## trained model overview
+```{R}
+
+View(ds_test)
+summary(ds_cv_model_best_r2)
+v <- predict(ds_big_mod, newdata=ds_test_red)
+v
+r <- ds_test_red$sea_level - v
+r
+# vv <- slice(ds_test_red_red, 6: n())$pred
+ds_test$year <- ds_test$year
+ds_test_gr <- ds_test
+ds_test_red_gr <- slice(ds_test_red, 6:n())
+# ds_test_red_gr$pred <- exp(v)
+ds_test_gr$pred <- v
+ds_test_gr$res <- r
+
+ds_test_gr$pred <- fitted(ds_cv_model_best_bic)
+
+df_best_bic <- ds_test_gr
+glimpse(df_best_bic)
+p2 <- ggplot(ds_test_gr, aes(pred, res)) +
+  geom_point(size = 1, alpha = .4) +
+  xlab('Predicted values') +
+  ylab('Residuals') +
+  ggtitle('Model 3', subtitle = 'sea_level ~ temp + co2_emiss + urb_pc + oc_h_anom')
+p2
+
+p2 <- ggplot(ds_test_gr, aes(pred, res)) + 
+  geom_point(size = 3, alpha = .7) + 
+  geom_smooth(method="lm") +
+  geom_line(aes(y=0)) +  
+  xlab('Predicted values') +
+  ylab('Residuals') +
+  ggtitle('Model x')
+p2
+
+p2 <- ggplot(ds_test_gr, aes(year)) + 
+  geom_line(aes(y=sea_level), color="green", lwd=5) + 
+  geom_line(aes(y=pred), color="red", lwd=5) + 
+  xlab('Year as Id') +
+  ggtitle('Model 2')
+p2
+
+p2 <- ds_test_red_gr |> ggplot(aes(year)) + 
+  geom_point(aes(y=sea_level), color="green") + 
+  geom_jitter(aes(y=pred), color="red", size=2, alpha=0.5) + 
+  xlab('Year as Id') +
+  ggtitle('Model ff test')
+p2
+
+
+ds_train_red_gr <- ds_train_red
+# ds_train_red_gr$pred <- fitted(ds_model_big_best_bic)
+
+# ds_train_red_gr$res <- resid(ds_model_big_best_bic)
+
+ds_train_gr <- ds_train
+ds_train_gr$pred <- fitted(ds_big_mod)
+ds_train_gr$res <- resid(ds_big_mod)
+p2 <- ggplot(ds_train_gr, aes(pred, res)) +
+  geom_point(size = 3, alpha = .8, color="yellow") +
+  geom_smooth(method="lm", ,lwd=3) +
+  geom_line(aes(y=0),lwd=2) +
+  xlab('Predicted values') +
+  ylab('Residuals') +
+  ggtitle('Model x') +
+  theme(axis.title = element_text(size = 18), axis.text = element_text(size = 14), plot.title = element_text(size = 20, face = "bold"))
+# panel.background = element_rect(fill='transparent'), #transparent panel bg
+#  plot.background = element_rect(fill='transparent', color= NA ), #transparent plot bg
+#  panel.grid.major = element_blank(), #remove major gridlines
+#  panel.grid.minor = element_blank(), #remove minor gridlines
+# #  axis.text.y = element_text(color = "white"),
+# #  axis.ticks.y = element_line(color = "white"),
+#  legend.background = element_rect(fill='transparent'), #transparent legend bg
+#  legend.box.background = element_rect(fill='transparent'))
+p2
+ggsave("IRes.png", background="transparent")
+p2 <- ds_train_gr |> ggplot() + 
+  geom_histogram(aes(res),bins=20, color="green") + 
+  xlab('Residuals distribution') +
+  ggtitle('Model x test')
+p2
+p2 <- ds_train_gr |> ggplot() + 
+  geom_histogram(aes(res),bins=20, color="green") + 
+  xlab('Residuals distribution') +
+  ggtitle('Model x test') +
+  theme(axis.title = element_text(size = 18), axis.text = element_text(size = 14), plot.title = element_text(size = 20, face = "bold"))
+# panel.background = element_rect(fill='transparent'), #transparent panel bg
+#  plot.background = element_rect(fill='transparent', color= NA ), #transparent plot bg
+#  panel.grid.major = element_blank(), #remove major gridlines
+#  panel.grid.minor = element_blank(), #remove minor gridlines
+# #  axis.text.y = element_text(color = "white"),
+# #  axis.ticks.y = element_line(color = "white"),
+#  legend.background = element_rect(fill='transparent'), #transparent legend bg
+#  legend.box.background = element_rect(fill='transparent'))
+p2
+ggsave("IHist.png", background="transparent")
+p2 <- ds_train_gr |> ggplot(aes(year)) + 
+  geom_line(aes(y=sea_level), color="green", lwd=2) + 
+  geom_jitter(aes(y=pred), color="red", size=3) + 
+  xlab('Year as Id') +
+  ggtitle('Model ff test') +
+  theme(axis.title = element_text(size = 18), axis.text = element_text(size = 14), plot.title = element_text(size = 20, face = "bold"))
+# panel.background = element_rect(fill='transparent'), #transparent panel bg
+#  plot.background = element_rect(fill='transparent', color= NA ), #transparent plot bg
+#  panel.grid.major = element_blank(), #remove major gridlines
+#  panel.grid.minor = element_blank(), #remove minor gridlines
+# #  axis.text.y = element_text(color = "white"),
+# #  axis.ticks.y = element_line(color = "white"),
+#  legend.background = element_rect(fill='transparent'), #transparent legend bg
+#  legend.box.background = element_rect(fill='transparent'))
+p2
+ggsave("IPhoto.png", background="transparent")
+bptest(ds_model_best_bic)
+shapiro.test(resid(ds_model_best_bic_cust_trans))
+ds_model_big_best_bic
+abs(rstandard(ds_model_best_bic_cust_trans)) > 2
+hatvalues(ds_model_best_bic) > 2 * mean(hatvalues(ds_model_best_bic))
+cooks.distance(ds_model_best_bic)[17] > 4 / length(cooks.distance(ds_model_best_bic))
+
+ds_train[28,]
+par(mfrow=c(1, 1))
+qqnorm(resid(ds_cv_model_best_bic), cex =3, main="",cex.lab=2.5,cex.axis=1.5, pch = 21, bg="grey", col = "black")
+qqline(resid(ds_cv_model_best_bic), lty = 3, lwd = 5, col = "dodgerblue")
+View(ds_train)
+formula(ds_model_big_best_bic)
+vif(ds_model3)
+coef(ds_cv_model_best_bic)
+boxcox(ds_model_big_best_bic_not_trans, plotit = TRUE)
+boxcox(ds_model_best_bic, seq(0.5, 3, 0.1), plotit = TRUE)
+```
+```{R}
+ds_model_big_best_bic_not_trans <- lm(sea_level ~ elnino_anom_c + temp:urb_pc + urb_pc:co2_emiss + 
+    oc_h_anom:elnino_anom_c + elnino_anom_c:co2_emiss, data=ds_train)
+summary(ds_model_big_best_bic_not_trans)
+ds_model_big_best_bic_log_trans <- lm(log(sea_level_ ~ elnino_anom_c + temp:urb_pc + urb_pc:co2_emiss + 
+    oc_h_anom:elnino_anom_c + elnino_anom_c:co2_emiss, data=ds_train)
+summary(ds_model_big_best_bic_log_trans)
+ds_model_big_best_bic_cust_trans <- lm(sea_level ~ elnino_anom_c + temp:urb_pc + urb_pc:co2_emiss + 
+    oc_h_anom:elnino_anom_c + elnino_anom_c:co2_emiss, data=ds_train)
+summary(ds_model_big_best_bic_cust_trans)
+
+
+ds_model_best_bic_not_trans <- lm(sea_level ~ water_cons + co2 + urb_pc, data=ds_train)
+ds_model_best_bic_log_trans <- lm(log(sea_level) ~ water_cons + co2 + urb_pc, data=ds_train)
+ds_model_best_bic_cust_trans <- lm((sea_level^2.3 - 1)/2.3) ~ water_cons + co2 + urb_pc, data=ds_train)
+summary(ds_model_best_bic_not_trans)
+summary(ds_model_best_bic_log_trans)
+summary(ds_model_best_bic_cust_trans)
+```
+
+## test
+```{R}
+names(ds_test)
+ds_test_red <- ds_test |> select(-c('X', 'year','ch4', 'n2o', 'sf6', 'co2_emiss.x', 'l_ice_mass_anom' ))
+ds_test_red_red <- ds_test_red |> select(-c('co2', 's_ice_ext_anom' ))
+
+View(ds_test_red)
+
+v <- predict(ds_cv_model_best_bic, newdata=ds_test_red)
+# vv <- slice(ds_test_red_red, 6: n())$pred
+ds_test_red$year <- ds_test$year
+
+ds_test_red_gr <- slice(ds_test_red, 6:n())
+ds_test_red_gr$pred <- v
+
+p2 <- ds_test_red_gr |> ggplot(aes(year)) + 
+  geom_line(aes(y=sea_level), color="green", lwd=2) + 
+  geom_line(aes(y=pred), color="red", lwd=2) + 
+  xlab('Year as Id') +
+  ggtitle('Model ff test')
+p2
+
+sigma(ds_model_best_bic)
+summary(ds_big_mod)
+shapiro.test(resid(ds_big_mod))
+```
+## Datasets to use + overview
+
+### Some information on temperature changes over time
+```{R}
+data_temps <- read_csv("D:\\УТМ\\3 КУРС\\1 СЕМЕСТР\\DS\\Materials\\GlobalTemperatures.csv")
+glimpse(data_temps)
+data_temps_sliced <- dplyr::select(data_temps, c("dt", "LandAverageTemperature", "LandAverageTemperatureUncertainty"))
+data_temps_by_year <- data_temps_sliced
+data_temps_by_year$year_col <- strftime(data_temps_sliced$dt, "%Y")
+data_temps_by_year <- data_temps_by_year[, !(names(data_temps_by_year) %in% c("dt"))]
+# data_temps_by_year <- aggregate(data_temps_by_year["LandAverageTemperature"], list(data_temps_by_year$year_col), mean, na.rm=TRUE, na.action=NULL)
+d <- aggregate(c(data_temps_by_year["LandAverageTemperatureUncertainty"], data_temps_by_year["LandAverageTemperature"]), list(data_temps_by_year$year_col), mean, na.rm = TRUE, na.action = NULL)
+
+names(d)[names(d) == "Group.1"] <- "year"
+d$year <- as.integer(as.vector(d$year))
+d <- data.frame(d)
+View(d)
+glimpse(d)
+
+first <- as.integer(d$year[1])
+last <- as.integer(tail(d$year, 1))
+
+d |> ggplot(aes(x = year, y = LandAverageTemperature + LandAverageTemperatureUncertainty)) +
+  geom_point(color = "red")
+d |> ggplot(aes(x = year, y = LandAverageTemperature - LandAverageTemperatureUncertainty)) +
+  geom_point(color = "blue")
+d |> ggplot(aes(x = year, y = LandAverageTemperature)) +
+  geom_point(color = "green")
+
+d |> ggplot() +
+  geom_point(aes(x = year, y = LandAverageTemperature + LandAverageTemperatureUncertainty), color = "red") +
+  geom_point(aes(x = year, y = LandAverageTemperature - LandAverageTemperatureUncertainty), color = "blue") +
+  geom_point(aes(x = year, y = LandAverageTemperature), color = "green") +
+  labs(
+    x = "Year",
+    y = "Temps"
+  )
+d <- d |> mutate(MinTemp = LandAverageTemperature - LandAverageTemperatureUncertainty)
+d <- d |> mutate(MaxTemp = LandAverageTemperature + LandAverageTemperatureUncertainty)
+View(d)
+h <- ggplot(d, aes(x = factor(year), y = LandAverageTemperature, ymin = MinTemp, ymax = MaxTemp, group = 1))
+h +
+  geom_ribbon(fill = "gray", alpha = 0.7) +
+  scale_x_discrete(breaks = seq(first, last, 10)) +
+  geom_line(color = "#000000", lwd=1.2) +
+  labs(
+    x = "Year",
+    y = "Temps"
+  ) +
+  theme(axis.title = element_text(size = 18),axis.text = element_text(size = 14),  plot.title = element_text(size = 20, face = "bold"))
+# panel.background = element_rect(fill='transparent'), #transparent panel bg
+#  plot.background = element_rect(fill='transparent', color= NA ), #transparent plot bg
+#  panel.grid.major = element_blank(), #remove major gridlines
+#  panel.grid.minor = element_blank(), #remove minor gridlines
+# #  axis.text.y = element_text(color = "white"),
+# #  axis.ticks.y = element_line(color = "white"),
+#  legend.background = element_rect(fill='transparent'), #transparent legend bg
+#  legend.box.background = element_rect(fill='transparent')
+ h
+ ggsave("Temps.png")
+```
+
+### Some information on gas changes over time
+```{R}
+data_gases <- read_csv("D:\\УТМ\\3 КУРС\\1 СЕМЕСТР\\DS\\Materials\\global_gases.csv")
+glimpse(data_gases)
+View(data_gases)
+```
+
+### data_gases_emission
+```{R}
+
+data_gases <- read_csv("D:\\УТМ\\3 КУРС\\1 СЕМЕСТР\\DS\\Materials\\greenhouse_gas_inventory_data_data.csv")
+glimpse(data_gases)
+View(data_gases)
+
+
+data_gases <- data_gases %>% mutate(category = recode(category,
+  carbon_dioxide_co2_emissions_without_land_use_land_use_change_and_forestry_lulucf_in_kilotonne_co2_equivalent = "CO2",
+  greenhouse_gas_ghgs_emissions_including_indirect_co2_without_lulucf_in_kilotonne_co2_equivalent = "GHG-indirect-CO2",
+  greenhouse_gas_ghgs_emissions_without_land_use_land_use_change_and_forestry_lulucf_in_kilotonne_co2_equivalent = "GHG",
+  hydrofluorocarbons_hfcs_emissions_in_kilotonne_co2_equivalent = "HFC",
+  methane_ch4_emissions_without_land_use_land_use_change_and_forestry_lulucf_in_kilotonne_co2_equivalent = "CH4",
+  nitrogen_trifluoride_nf3_emissions_in_kilotonne_co2_equivalent = "HF3",
+  nitrous_oxide_n2o_emissions_without_land_use_land_use_change_and_forestry_lulucf_in_kilotonne_co2_equivalent = "N2Os",
+  perfluorocarbons_pfcs_emissions_in_kilotonne_co2_equivalent = "PFCs",
+  sulphur_hexafluoride_sf6_emissions_in_kilotonne_co2_equivalent = "SF6",
+  unspecified_mix_of_hydrofluorocarbons_hfcs_and_perfluorocarbons_pfcs_emissions_in_kilotonne_co2_equivalent = "HFC-PFC-mix"
+))
+View(data_gases)
+summary(data_gases)
+glimpse(data_gases)
+data_gases$category <- as.factor(data_gases$category)
+levels(data_gases$category)
+
+data_gases <- data_gases %>%
+  rename(country = country_or_area) %>%
+  dplyr::filter(country != "European Union")
+data_gases <- data_gases %>%
+  mutate(
+    country = ifelse(country == "Russian Federation", "Russia", country),
+    country = ifelse(country == "United States of America", "USA", country)
+  ) %>%
+  mutate(region = case_when(
+    .$country %in% c("Japan", "Australia", "New Zealand", "Russia", "USA", "Canada") ~ "non-European",
+    TRUE ~ "European"
+  ))
+
+t <- data_gases %>%
+  group_by(country, category) %>%
+  summarise(total = sum(value))
+table(t$country, t$category)
+
+data_co2_emissions <- data_gases %>%
+  dplyr::filter(category == "CO2") |>
+  group_by(year) %>%
+  summarise(total = sum(value))
+View(data_co2_emissions)
+
+par(mfrow = c(2,2))
+
+p1 <- data_co2_emissions |> ggplot(aes(year, total)) + 
+geom_point(size=3) +
+geom_line(lwd=1, alpha=0.5) +
+scale_y_continuous(labels = label_number(scale = 1e-3, prefix = "", suffix = " m.t.", accuracy = 1)) +
+labs(
+    x = "Year",
+    y = "International CO2 emissions(Kilotones)"
+  ) +
+  theme(axis.title = element_text(size = 18),axis.text = element_text(size = 14),  plot.title = element_text(size = 20, face = "bold"))
+p1
+ggsave("Emissions_total.png")
+
+
+options(repr.plot.width = 12, repr.plot.height = 7)
+gas <- "CO2"
+p2 <- data_gases %>%
+  dplyr::filter(category == gas & year %in% c(1990, 2014)) %>%
+  mutate(year = as.factor(year)) %>%
+  group_by(category, year) %>%
+  ggplot(aes(x = value, group = year, col = year)) +
+  scale_x_continuous(trans = "log10") +
+  geom_density(linewidth = 1) +
+  theme(text = element_text(size = 20)) +
+  # labs(title = paste("International", gas, "emissions"), subtitle = "A comparison between year 1990 and 2014") +
+  xlab("Kilotones(log10)")
+p2
+ggsave("Emissions_dens.png", p2)
+options(repr.plot.width = 12, repr.plot.height = 7)
+p3 <- data_gases %>%
+  group_by(category, year) %>%
+  summarise(total = sum(value)) %>%
+  ggplot(aes(year, total, col = category)) +
+  geom_line(na.rm = TRUE, size = 1) +
+  scale_color_brewer(name = "", palette = "Paired") +
+  theme_minimal() +
+  theme(text = element_text(size = 20), legend.text = element_text(size = 15)) +
+  # labs(
+    # title = "International Greenhouse gas Emissions",
+    # subtitle = "in kilotons CO2 equivalent, summed by all countries per year"
+  # ) +
+  xlab("") +
+  ylab("")
+p3
+ggsave("Emissions_by_gas.png", p3)
+
+options(repr.plot.width = 10, repr.plot.height = 8)
+first_year <- data_gases %>%
+  dplyr::filter(category == gas & year == 1990) %>%
+  pull(unique(country))
+last_year <- data_gases %>%
+  dplyr::filter(category == gas & year == 2014) %>%
+  pull(unique(country))
+c <- intersect(first_year, last_year)
+
+temp <- data_gases %>%
+  dplyr::filter(category == gas & year %in% c(1990, 2014) & country %in% c & region == "non-European") %>%
+  mutate(location = ifelse(year == 1990, 1, 2), hjust = ifelse(year == 2014, 1, 0)) %>%
+  group_by(country) %>%
+  mutate(slope = ifelse(value[year == 1990] < value[year == 2014], "asc", "desc")) %>%
+  ungroup() %>%
+  mutate(year = as.factor(year))
+
+p4 <- temp %>% ggplot(aes(year, value, group = country)) +
+  geom_line(aes(color = slope), show.legend = FALSE, size = 1) +
+  scale_y_continuous(trans = "log10") +
+  theme(text = element_text(size = 20)) +
+  geom_text_repel(aes(x = location, label = country, hjust = hjust, size = 3), show.legend = FALSE) +
+  # labs(title = paste(gas, "emissions"), subtitle = "A comparison for non-European countries") +
+  xlab("") +
+  ylab("Kilotones(log10)")
+p4
+ggsave("Emissions_by_not_eu_countries.png", p4)
+
+options(repr.plot.width = 20, repr.plot.height = 10)
+temp <- data_gases %>%
+  mutate(category = reorder(category, value, FUN = sum)) %>%
+  group_by(category, country) %>%
+  summarise(total = sum(value))
+unique_cat <- sort(unique(temp$category))
+ls <- list()
+for (i in 1:length(unique_cat)) {
+  ls[[i]] <- temp %>% dplyr::filter(category == unique_cat[i])
+  ls[[i]]$max <- ifelse(ls[[i]]$country == ls[[i]][which.max(ls[[i]]$total), ]$country, "yes", "no")
+}
+
+k <- do.call(rbind, ls)
+
+
+k %>% ggplot(aes(category, total)) +
+  geom_boxplot(alpha = 0.5, size = 1, show.legend = FALSE) +
+  scale_y_continuous(trans = "log10") +
+  geom_jitter(width = 0.2, alpha = 0.5, color = "tomato") +
+  theme(text = element_text(size = 22), axis.text.x = element_text(angle = 45, hjust = 1), legend.text = element_text(size = 11)) +
+  geom_label_repel(aes(label = ifelse(max == "yes", country, ""), alpha = .75),
+    size = 8, show.legend = FALSE, force = 3, arrow = arrow(length = unit(0.02, "npc")),
+    box.padding = 1
+  ) +
+  # labs(title = "Total Greenhouse gas emissions", subtitle = "Summed up all values of emissions in years for each 43 country") +
+  xlab("") +
+  ylab("in kilotons CO2 equivalent(log10)")
+ggsave("Emissions_top_country.png")
+```
+
+### data_gases
+```{R}
+data_co2 <- read_csv("D:\\УТМ\\3 КУРС\\1 СЕМЕСТР\\DS\\Materials\\co2_annmean_gl.csv")
+data_ch4 <- read_csv("D:\\УТМ\\3 КУРС\\1 СЕМЕСТР\\DS\\Materials\\ch4_annmean_gl.csv")
+data_n2o <- read_csv("D:\\УТМ\\3 КУРС\\1 СЕМЕСТР\\DS\\Materials\\n2o_annmean_gl.csv")
+data_sf6 <- read_csv("D:\\УТМ\\3 КУРС\\1 СЕМЕСТР\\DS\\Materials\\sf6_annmean_gl.csv")
+
+View(data_co2)
+# names(d)[names(d) == "Group.1"] <- "year"
+names(data_ch4)[names(data_ch4) == "mean"] <- 'mean1'
+View(data_ch4)
+data_gases <- data.frame(year=data_co2$year)
+View(data_gases)
+glimpse(data_gases)
+glimpse(data_ch4)
+data_gases <- merge(data_gases,
+                        data_ch4[,c('year','mean1')],
+                        by = 'year', all.x=TRUE)
+names(data_gases)[names(data_gases) == "mean1"] <- 'ch4'
+data_gases <- merge(data_gases,
+                        data_n2o[,c('year','mean')],
+                        by = 'year', all.x=TRUE)
+names(data_gases)[names(data_gases) == "mean"] <- 'n2o'
+data_gases <- merge(data_gases,
+                        data_co2[,c('year','mean')],
+                        by = 'year', all.x=TRUE)
+names(data_gases)[names(data_gases) == "mean"] <- 'co2'
+data_gases <- merge(data_gases,
+                        data_sf6[,c('year','mean')],
+                        by = 'year', all.x=TRUE)
+names(data_gases)[names(data_gases) == "mean"] <- 'sf6'
+View(data_gases)
+
+options(repr.plot.width = 14, repr.plot.height = 4)
+plot <- data_gases |> ggplot(aes(x = year)) 
+# + guides(color="none")
+plot+
+geom_line(aes(y=log(ch4), color='ch4'), lwd=4)+
+geom_line(aes(y=log(co2), color="co2"), lwd=4)+
+geom_line(aes(y=log(n2o), color="n2o"), lwd=4)+
+geom_line(aes(y=log(sf6), color="sf6"), lwd=4)+
+scale_y_continuous(limits = c(1.5, 8)) +
+labs(y="Gas concentration(log)") + 
+# scale_fill_identity(name = 'the fill', guide = 'legend',labels = c('m1'))+
+scale_colour_manual(name = 'Gases', 
+         values =c('sf6'='white','ch4'='red', 'n2o' = "green", 'co2'='#acfeff'), labels = c('ch4','co2', 'n2o', 'sf6'))+
+         theme(legend.text=element_text(size=14), legend.title=element_text(size=14), axis.title = element_text(size = 18), axis.text = element_text(size = 14), plot.title = element_text(size = 20, face = "bold"), legend.key.size = unit(3,"line"))+
+         guides(color = guide_legend(override.aes = list(size=10)))
+# panel.background = element_rect(fill='transparent'), #transparent panel bg
+#  plot.background = element_rect(fill='transparent', color= NA ), #transparent plot bg
+#  panel.grid.major = element_blank(), #remove major gridlines
+#  panel.grid.minor = element_blank(), #remove minor gridlines
+# #  axis.text.y = element_text(color = "white"),
+# #  axis.ticks.y = element_line(color = "white"),
+#  legend.background = element_rect(fill='transparent'), #transparent legend bg
+#  legend.box.background = element_rect(fill='transparent'))
+ ggsave("Gases.png")
+```
+
+### data_sea_level
+```{R}
+
+data_sea_level <- read_csv("D:\\УТМ\\3 КУРС\\1 СЕМЕСТР\\DS\\Materials\\global-average-absolute-sea-level-change-csv_csv.csv")
+
+data_sea_level[1,"CSIRO_Adjusted_Sea_Level"] <- 0
+data_sea_level$sea_level <- rowMeans(data_sea_level[,c('NOAA_Adjusted_Sea_Level', 'CSIRO_Adjusted_Sea_Level')], na.rm=TRUE)
+# data_sea_level <- data_sea_level %>% dplyr::select(-sea_level)
+View(data_sea_level)
+
+plot <- data_sea_level |> ggplot(aes(x = Measurement_Year, y=sea_level)) +guides(fill = "none", alpha="none")+ geom_line()
+#get the ylim and xlim
+xmin <- min(ggplot_build(plot)$layout$panel_ranges[[1]]$x.range) 
+xmax <- max(ggplot_build(plot)$layout$panel_ranges[[1]]$x.range)
+ymin <- min(ggplot_build(plot)$layout$panel_ranges[[1]]$y.range)
+ymax <- max(ggplot_build(plot)$layout$panel_ranges[[1]]$y.range)
+
+plot + geom_area(alpha=0.3, fill="gray")+
+geom_line(aes(y=data_sea_level$NOAA_Adjusted_Sea_Level), color="blue", lwd=2) +
+geom_line(aes(y=data_sea_level$CSIRO_Adjusted_Sea_Level), color="black", lwd=2) +
+labs(y="Sea level", x="Measurement Year")+
+theme(axis.title = element_text(size = 18), axis.text = element_text(size = 14), plot.title = element_text(size = 20, face = "bold"))
+# panel.background = element_rect(fill='transparent'), #transparent panel bg
+#  plot.background = element_rect(fill='transparent', color= NA ), #transparent plot bg
+#  panel.grid.major = element_blank(), #remove major gridlines
+#  panel.grid.minor = element_blank(), #remove minor gridlines
+# #  axis.text.y = element_text(color = "white"),
+# #  axis.ticks.y = element_line(color = "white"),
+#  legend.background = element_rect(fill='transparent'), #transparent legend bg
+#  legend.box.background = element_rect(fill='transparent'))+
+#  geom_segment(aes(x=as.Date(xmax+1),xend=as.Date(xmax+1),
+#                      y=ymin-2,yend=ymax+2), color = "white")
+ ggsave("Sea level change compare to 1880x.png")
+```
+
+### data_co2_by_cats
+```{R}
+data_co2 <- read_xlsx("D:\\УТМ\\3 КУРС\\1 СЕМЕСТР\\DS\\Materials\\co2_details.xlsx")
+View(data_co2)
+glimpse(data_co2)
+plot <- data_co2 |> ggplot(aes(x = Year, alpha=1)) +guides(colours = "none", fill="none", alpha="none")
+plot +
+geom_line(aes(y=data_co2$"fossil emissions excluding carbonation", color="fossil"), lwd=3) +
+# geom_area(aes(y=data_co2$"fossil emissions excluding carbonation", fill="fossil")) +
+# geom_line(aes(y=data_co2$"atmospheric growth", color="atm")) +
+# geom_area(aes(y=data_co2$"atmospheric growth", fill="atm")) +
+# geom_line(aes(y=data_co2$"ocean sink", color="ocean")) +
+# geom_area(aes(y=data_co2$"ocean sink", fill="ocean")) +
+geom_line(aes(y=data_co2$"land-use change emissions", color="land"), lwd=3) +
+# geom_area(aes(y=data_co2$"land sink", fill="land")) +
+# geom_line(aes(y=data_co2$"cement carbonation sink", color="cement")) +
+# geom_area(aes(y=data_co2$"cement carbonation sink", fill="cement")) +
+scale_colour_manual(name = 'Sources', 
+         values =c('land' = "black", 'fossil'='blue'), 
+         labels = c('fossil', 'land use')) +
+# scale_colour_manual(name = 'Indications of real growth', 
+#   values =c('atm'='black','ocean'='red', 'cement'='blue'), 
+#   labels = c('atm','cement', 'ocean'))+
+labs(y="Carbon, billions of tonnes)", x="Measurement Year")
+
+plot <- data_co2 |> ggplot(aes(x = Year, alpha=1)) +guides(colours = "legend", fill="none", alpha="none")
+plot +
+# geom_line(aes(y=data_co2$"fossil emissions excluding carbonation", color="fossil")) +
+# geom_area(aes(y=data_co2$"fossil emissions excluding carbonation", fill="fossil")) +
+geom_line(aes(y=data_co2$"atmospheric growth", color="atm")) +
+# geom_area(aes(y=data_co2$"atmospheric growth", fill="atm")) +
+geom_line(aes(y=data_co2$"ocean sink", color="ocean")) +
+# geom_area(aes(y=data_co2$"ocean sink", fill="ocean")) +
+# geom_line(aes(y=data_co2$"land sink", color="land")) +
+# geom_area(aes(y=data_co2$"land sink", fill="land")) +
+geom_line(aes(y=data_co2$"cement carbonation sink", color="cement")) +
+# geom_area(aes(y=data_co2$"cement carbonation sink", fill="cement")) +
+# scale_colour_manual(name = 'Sources', 
+#          values =c('land' = "green", 'fossil'='purple'), 
+#          labels = c('fossil', 'land')) +
+scale_colour_manual(name = 'Indications of real growth', 
+  values =c('atm'='black','ocean'='red', 'cement'='blue'), 
+  labels = c('atm','cement', 'ocean'))+
+labs(y="Carbon, billions of tonnes)", x="Measurement Year")
+# ggsave("Emissions_graph_dynamics.png", bg="transparent")
+
+pc <- dplyr::filter(data_co2, Year == 2020) |> dplyr::select(-"fossil emissions excluding carbonation", -"land-use change emissions", -"budget imbalance", -"Year")
+t(pc)
+ps <- dplyr::filter(data_co2, Year == 2020) |> dplyr::select("fossil emissions excluding carbonation", "land-use change emissions")
+t(ps)
+ps <- data.frame(cbind(names(ps), t(ps)))
+rownames(ps) <- NULL
+colnames(ps) <- c('cat', 'volume')
+
+
+pc <- data.frame(cbind(names(pc), t(pc)))
+rownames(pc) <- NULL
+colnames(pc) <- c('cat', 'volume')
+
+pc
+ps
+
+plot <- ggplot(pc,aes(x="", fill=cat, y=round(as.numeric(volume), 2)))
+plot+
+ geom_col(color = "#000000")  +
+  coord_polar(theta = "y") +
+  geom_label(size=13, color="#000000",aes(label = round(as.numeric(volume), 2)),
+            position = position_stack(vjust = 0.5), show.legend=FALSE) + labs(y="", x="") +
+  theme(legend.position="bottom",
+  legend.direction = "vertical", 
+  axis.text=element_blank(),
+  axis.ticks=element_blank(),
+  axis.title=element_blank(),
+  panel.grid=element_blank()) +
+  scale_fill_brewer()+
+  theme(axis.title = element_text(size = 20), plot.title = element_text(size = 20, face = "bold"))
+# panel.background = element_rect(fill='transparent'), #transparent panel bg
+#  plot.background = element_rect(fill='transparent', color= NA ), #transparent plot bg
+#  panel.grid.major = element_blank(), #remove major gridlines
+#  panel.grid.minor = element_blank(), #remove minor gridlines
+# #  axis.text.y = element_text(color = "white"),
+# #  axis.ticks.y = element_line(color = "white"),
+#   legend.text = element_text(size=36, color="white"), #transparent legend bg
+#  legend.background = element_rect(fill='transparent'), #transparent legend bg
+#  legend.box.background = element_rect(fill='transparent'))
+#  ggsave("Emissions.png")
+
+plot <- ggplot(ps,aes(x="", fill=cat, y=round(as.numeric(volume), 2)))
+plot+
+ geom_col(color = "#000000")  +
+  coord_polar(theta = "y") +
+  geom_label(size=13, color="#000000",aes(label = round(as.numeric(volume), 2)),
+            position = position_stack(vjust = 0.5), show.legend=FALSE) + labs(y="", x="") +
+  theme(legend.position="bottom",
+  legend.direction = "vertical", 
+  axis.text=element_blank(),
+  axis.ticks=element_blank(),
+  axis.title=element_blank(),
+  panel.grid=element_blank()) +
+  scale_fill_brewer()+
+  theme(axis.title = element_text(size = 20), plot.title = element_text(size = 20, face = "bold"))
+# panel.background = element_rect(fill='transparent'), #transparent panel bg
+#  plot.background = element_rect(fill='transparent', color= NA ), #transparent plot bg
+#  panel.grid.major = element_blank(), #remove major gridlines
+#  panel.grid.minor = element_blank(), #remove minor gridlines
+# #  axis.text.y = element_text(color = "white"),
+# #  axis.ticks.y = element_line(color = "white"),
+#   legend.text = element_text(size=36, color="white"), #transparent legend bg
+#  legend.background = element_rect(fill='transparent'), #transparent legend bg
+#  legend.box.background = element_rect(fill='transparent'))
+#  ggsave("Emissions1.png")
+data_co2 <- data_co2 |> aggregate(data_co2$"fossil emissions excluding carbonation"+data_co2$"land sink"~year, FUN=sum, na.rm=TRUE, na.action=NULL)
+
+```
+
+### data_sea_ice
+```{R}
+data_sea_ice <- read_csv("D:\\УТМ\\3 КУРС\\1 СЕМЕСТР\\DS\\Materials\\seaice.csv")
+View(data_sea_ice)
+glimpse(data_sea_ice)
+data_sea_ice_clear <- data_sea_ice |> aggregate(Extent~Year, FUN=mean, na.rm=TRUE, na.action=NULL)
+data_sea_ice_min <- data_sea_ice |> aggregate(Extent~Year, FUN=min, na.rm=TRUE, na.action=NULL)
+data_sea_ice_max <- data_sea_ice |> aggregate(Extent~Year, FUN=max, na.rm=TRUE, na.action=NULL)
+data_sea_ice_clear$min = data_sea_ice_min$Extent
+data_sea_ice_clear$max = data_sea_ice_max$Extent
+View(data_sea_ice_clear)
+glimpse(data_sea_ice_clear)
+plot <- data_sea_ice_clear |> ggplot(aes(x = Year, y=Extent, ymin=min, ymax=max))
+plot+
+geom_ribbon(fill="gray", alpha=0.4) +
+geom_line(color="black", lwd=3)+
+theme(axis.title = element_text(size = 18),axis.text = element_text(size = 14), plot.title = element_text(size = 20, face = "bold"),
+panel.background = element_rect(fill='transparent'), #transparent panel bg
+ plot.background = element_rect(fill='transparent', color= NA ), #transparent plot bg
+ panel.grid.major = element_blank(), #remove major gridlines
+ panel.grid.minor = element_blank(), #remove minor gridlines
+#  axis.text.y = element_text(color = "white"),
+#  axis.ticks.y = element_line(color = "white"),
+  legend.text = element_text(size=36, color="white"), #transparent legend bg
+ legend.background = element_rect(fill='transparent'), #transparent legend bg
+ legend.box.background = element_rect(fill='transparent'))
+  ggsave("s_ice.png")
+```
+
+### data_urban
+```{R}
+data_urban <- read_csv("D:\\УТМ\\3 КУРС\\1 СЕМЕСТР\\DS\\Materials\\urbanization-last-500-years.csv")
+names(data_urban)[4] <- "Urban_Percent"
+data_urban_clear <- data_urban |> aggregate(Urban_Percent~Year, FUN=mean, na.rm=TRUE, na.action=NULL)
+data_urban_min <- data_urban |> aggregate(Urban_Percent~Year, FUN=min, na.rm=TRUE, na.action=NULL)
+data_urban_max <- data_urban |> aggregate(Urban_Percent~Year, FUN=max, na.rm=TRUE, na.action=NULL)
+data_urban_clear$min = data_urban_min$Urban_Percent
+data_urban_clear$max = data_urban_max$Urban_Percent
+View(data_urban_clear)
+glimpse(data_urban_clear)
+plot <- data_urban_clear  |>  ggplot(aes(x = Year, y=Urban_Percent, ymin=min, ymax=max))
+plot+
+geom_line(color="black", lwd=3)+
+theme(axis.title = element_text(size = 18),axis.text = element_text(size = 14), plot.title = element_text(size = 20, face = "bold"))
+# panel.background = element_rect(fill='transparent'), #transparent panel bg
+#  plot.background = element_rect(fill='transparent', color= NA ), #transparent plot bg
+#  panel.grid.major = element_blank(), #remove major gridlines
+#  panel.grid.minor = element_blank(), #remove minor gridlines
+# #  axis.text.y = element_text(color = "white"),
+# #  axis.ticks.y = element_line(color = "white"),
+#   legend.text = element_text(size=36, color="white"), #transparent legend bg
+#  legend.background = element_rect(fill='transparent'), #transparent legend bg
+#  legend.box.background = element_rect(fill='transparent'))
+
+ggsave("urb.png")
+# geom_ribbon(alpha=0.2)
+```
+
+### data_land_ice
+```{R}
+data_anta <- read.csv("D:\\УТМ\\3 КУРС\\1 СЕМЕСТР\\DS\\Materials\\anta.csv")
+View(data_anta)
+glimpse(data_anta)
+# data_anta$Year <- as.integer(data_anta$Year)
+plot <- data_anta |> ggplot(aes(x = Year, y=anom, ymin=anom-unc, ymax=anom+unc))
+plot+
+geom_line()+
+geom_ribbon(alpha=0.2)
+#  ggsave("ant_ice.png")
+
+data_gren <- read.csv("D:\\УТМ\\3 КУРС\\1 СЕМЕСТР\\DS\\Materials\\gren.csv")
+View(data_gren)
+glimpse(data_gren)
+# data_gren$Year <- as.integer(data_gren$Year)
+plot <- data_gren |> ggplot(aes(x = Year, y=anom, ymin=anom-unc, ymax=anom+unc))
+plot+
+geom_line()+
+geom_ribbon(alpha=0.2)
+#  ggsave("gren_ice.png")
+
+
+data_land_ice <- merge(data_anta, data_gren, by="Year", all.x=TRUE, all.y=TRUE)
+data_land_ice$"anom.x" <- as.numeric(data_land_ice$"anom.x")
+data_land_ice$"anom.y" <- as.numeric(data_land_ice$"anom.y")
+data_land_ice$"unc.x" <- as.numeric(data_land_ice$"unc.x")
+data_land_ice$"unc.y" <- as.numeric(data_land_ice$"unc.y")
+plot <- data_land_ice |> ggplot(aes(x = Year, y=data_land_ice$"anom.x"+data_land_ice$"anom.y", ymin=data_land_ice$"anom.x"+data_land_ice$"anom.y"-(data_land_ice$"unc.x"+ data_land_ice$"unc.y"), ymax=data_land_ice$"anom.x"+data_land_ice$"anom.y"+(data_land_ice$"unc.x")+ data_land_ice$"unc.y"))
+plot+
+geom_line(color="black", lwd=1)+
+geom_ribbon(fill="gray", alpha=0.6) +
+theme(axis.title = element_text(size = 18),axis.text = element_text(size = 14), plot.title = element_text(size = 20, face = "bold"))+
+labs(y="anom")
+# panel.background = element_rect(fill='transparent'), #transparent panel bg
+#  plot.background = element_rect(fill='transparent', color= NA ), #transparent plot bg
+#  panel.grid.major = element_blank(), #remove major gridlines
+#  panel.grid.minor = element_blank(), #remove minor gridlines
+# #  axis.text.y = element_text(color = "white"),
+# #  axis.ticks.y = element_line(color = "white"),
+#   legend.text = element_text(size=36, color="white"), #transparent legend bg
+#  legend.background = element_rect(fill='transparent'), #transparent legend bg
+#  legend.box.background = element_rect(fill='transparent'))
+ ggsave("l_ice.png")
+```
+
+### data_water_consump
+```{R}
+data_w_cons_all <- read_csv("D:\\УТМ\\3 КУРС\\1 СЕМЕСТР\\DS\\Materials\\global-freshwater-use-over-the-long-run.csv")
+unique(data_w_cons_all$Entity)
+data_w_cons <- data_w_cons_all |> dplyr::filter(Entity == "World")
+data_w_cons_br <- data_w_cons_all |> dplyr::filter(Entity == "BRICS")
+data_w_cons_o <- data_w_cons_all |> dplyr::filter(Entity == "OECD")
+data_w_cons_r <- data_w_cons_all |> dplyr::filter(Entity == "ROW")
+# names(data_urban)[4] <- "Urban_Percent"
+# data_urban_clear <- data_urban |> aggregate(Urban_Percent~Year, FUN=mean, na.rm=TRUE, na.action=NULL)
+# data_urban_min <- data_urban |> aggregate(Urban_Percent~Year, FUN=min, na.rm=TRUE, na.action=NULL)
+# data_urban_max <- data_urban |> aggregate(Urban_Percent~Year, FUN=max, na.rm=TRUE, na.action=NULL)
+# data_urban_clear$min = data_urban_min$Urban_Percent
+# data_urban_clear$max = data_urban_max$Urban_Percent
+View(data_w_cons <- data_w_cons |> dplyr::filter(Year < 2011))
+glimpse(data_w_cons)
+View(data_w_cons_r)
+data_w_cons_o
+
+plot <- data_w_cons |> ggplot(aes(x = Year, ymin=0))+guides(colour = "none", alpha="none")
+plot+
+geom_ribbon(aes(ymax=data_w_cons$'Freshwater use'), fill='gray')+
+geom_ribbon(aes(ymax=data_w_cons_br$'Freshwater use'), fill='#72a6ff')+
+geom_ribbon(aes(ymax=data_w_cons_r$'Freshwater use'),fill='green')+
+geom_ribbon(aes(ymax=data_w_cons_o$'Freshwater use'), fill='#f75c5c')+
+geom_line(aes(y=data_w_cons$'Freshwater use'))+
+geom_line(aes(y=data_w_cons_br$'Freshwater use', color='72a6ff'))+
+geom_line(aes(y=data_w_cons_r$'Freshwater use',color='green'))+
+geom_line(aes(y=data_w_cons_o$'Freshwater use',color='red'))+
+labs(y="Freshwater use")+
+scale_y_continuous(labels = label_number(scale = 1e-12, prefix = "", suffix = " tr.t.", accuracy = 1)) +
+theme(axis.title = element_text(size = 18),axis.text = element_text(size = 14), plot.title = element_text(size = 20, face = "bold"))
+# panel.background = element_rect(fill='transparent'), #transparent panel bg
+#  plot.background = element_rect(fill='transparent', color= NA ), #transparent plot bg
+#  panel.grid.major = element_blank(), #remove major gridlines
+#  panel.grid.minor = element_blank(), #remove minor gridlines
+# #  axis.text.y = element_text(color = "white"),
+# #  axis.ticks.y = element_line(color = "white"),
+#   legend.text = element_text(size=36, color="white"), #transparent legend bg
+#  legend.background = element_rect(fill='transparent'), #transparent legend bg
+#  legend.box.background = element_rect(fill='transparent'))
+ ggsave("w_cons.png", bg="transparent")
+# geom_ribbon(alpha=0.2)
+```
+### data_ocean_temp
+```{R}
+data_ocean_temp_anom <- read.csv("D:\\УТМ\\3 КУРС\\1 СЕМЕСТР\\DS\\Materials\\ohc_levitus_climdash_seasonal.csv")
+View(data_ocean_temp_anom)
+glimpse(data_ocean_temp_anom)
+names(data_ocean_temp_anom)[names(data_ocean_temp_anom) == "Year"] <- "year"
+names(data_ocean_temp_anom)[names(data_ocean_temp_anom) == "heat.content.anomaly..10.22..Joules."] <- "oc_h_anom"
+
+# data_ocean_temp_anom$Year <- as.integer(data_ocean_temp_anom$Year)
+plot <- data_ocean_temp_anom |> ggplot(aes(y=oc_h_anom))
+plot+
+geom_boxplot(color="black", lwd=3)+
+theme(axis.title = element_text(size = 20), plot.title = element_text(size = 20, face = "bold"))
+# panel.background = element_rect(fill='transparent'), #transparent panel bg
+#  plot.background = element_rect(fill='transparent', color= NA ), #transparent plot bg
+#  panel.grid.major = element_blank(), #remove major gridlines
+#  panel.grid.minor = element_blank(), #remove minor gridlines
+# #  axis.text.y = element_text(color = "white"),
+# #  axis.ticks.y = element_line(color = "white"),
+#   legend.text = element_blank(), #transparent legend bg
+#  legend.background = element_rect(fill='transparent'), #transparent legend bg
+#  legend.box.background = element_rect(fill='transparent'))
+#  ggsave("oc_h.png")
+
+```
+
+
+### EL-Nino
+```{R}
+data_oni <- read.csv("D:\\УТМ\\3 КУРС\\1 СЕМЕСТР\\DS\\Materials\\oni.csv")
+View(data_oni)
+glimpse(data_oni)
+# data_oni |> aggregate(cbind()~anom_c, FUN=mean)
+data_oni <-
+data_oni %>%
+  group_by(year) %>%
+  summarise(anom_c = mean(anom_c)) 
+  # |> ggplot(aes(x=year, y=anom_c))+geom_line()
+
+# data_oni$Year <- as.integer(data_oni$Year)
+plot <- dplyr::filter(data_oni, year>1900) |> ggplot(aes(factor(season), y=anom_c)) + guides(color="none")
+plot+
+geom_boxplot(outlier.color = "white", outlier.fill = "white", outlier.shape = 2,outlier.size = 4)+
+geom_jitter(width = 0.4,size=3, aes(color=factor(oni)))+
+labs(x="Season", y="Anomaly")+
+theme(axis.title = element_text(size = 20), plot.title = element_text(size = 20, face = "bold"))
+
+`# panel.background = element_rect(fill='transparent'), #transparent panel bg
+#  plot.background = element_rect(fill='transparent', color= NA ), #transparent plot bg
+#  panel.grid.major = element_blank(), #remove major gridlines
+#  panel.grid.minor = element_blank(), #remove minor gridlines
+# #  axis.text.y = element_text(color = "white"),
+# #  axis.ticks.y = element_line(color = "white"),
+#   legend.text = element_blank(), #transparent legend bg
+#  legend.background = element_rect(fill='transparent'), #transparent legend bg
+#  legend.box.background = element_rect(fill='transparent'))
+# facet_grid(rows=vars(year))
+#  ggsave("el-nino-1990.png")
+#  ggsave("el-nino.png")
+
+```
+## EDA
+```{R}
+ds <- 
+
+```
+
+## EDA
+```{R}
+ds <- data_sea_level
+ds <- ds |> mutate(year = format(as.Date(Measurement_Year, format="%Y-%m-%d"),"%Y"))
+ds <- ds |> dplyr::select(year, sea_level)
+
+temps <- d |> dplyr::filter(year %in% ds$year)
+temps$LandAverageTemperature
+ds$temp <- temps$LandAverageTemperature
+
+View(data_sea_level)
+View(ds)
+View(data_oni)
+View(data_sea_ice_clear)
+glimpse(data_sea_level)
+glimpse(ds)
+glimpse(data_gases)
+glimpse(data_sea_ice_clear)
+glimpse(data_urban_clear)
+View(data_land_ice)
+glimpse(data_land_ice)
+View(data_co2)
+data_land_ice['year'] <- lapply(data_land_ice['year'], FUN = trunc)
+data_land_ice <- data_land_ice |> aggregate(anom.x+anom.y~year, FUN=mean, na.rm=TRUE, na.action=NULL)
+# names(data_land_ice)[names(data_land_ice) == "Year"] <- "year"
+names(data_sea_ice_clear)[names(data_sea_ice_clear) == "Year"] <- "year"
+names(data_urban_clear)[names(data_urban_clear) == "Year"] <- "year"
+# names(data_land_ice)[names(data_land_ice) == "Year"] <- "year"
+names(data_w_cons)[names(data_w_cons) == "Year"] <- "year"
+names(data_w_cons)[names(data_w_cons) == "Freshwater use"] <- "water_cons"
+names(data_urban_clear)[names(data_urban_clear) == "Urban_Percent"] <- "urb_pc"
+names(data_sea_ice_clear)[names(data_sea_ice_clear) == "Extent"] <- "s_ice_ext_anom"
+names(data_land_ice)[names(data_land_ice) == "anom.x + anom.y"] <- "l_ice_mass_anom"
+names(data_co2)[names(data_co2) == 'data_co2$"fossil emissions excluding carbonation" + data_co2$"land sink"'] <- "co2_emiss"
+names(data_co2)[names(data_co2) == "Year"] <- "year"
+
+ds$year <- as.integer(ds$year)
+names(ds)[names(ds) == "co2.x"] <- "co2"
+names(ds)[names(ds) == "n2o.x"] <- "n2o"
+names(ds)[names(ds) == "sf6.x"] <- "sf6"
+names(ds)[names(ds) == "ch4.x"] <- "ch4"
+names(ds)[names(ds) == "ch4.x"] <- "ch4"
+
+
+glimpse(ds)
+ds <- ds |> dplyr::select(-c("co2.y", "n2o.y", "sf6.y", "ch4.y"))
+ds <- ds |> aggregate(.~year, FUN=mean, na.action=NULL)
+# ds <- ds |> dplyr::select(-c("threshold","sst_c","cumulative", "ntotal","oni","season"))
+# ds <- ds |> dplyr::select(-c("season"))
+# ds <- read.csv("DataCommon.csv")
+ds <- 
+merge(ds, data_gases,
+                        by = 'year', all.x=TRUE)
+ds <-
+merge(ds, data_sea_ice_clear[,c("year", "s_ice_ext_anom")],
+                        by = 'year', all.x=TRUE)                      
+ds <- 
+merge(ds, data_urban_clear[,c("year", "urb_pc")],
+                        by = 'year', all.x=TRUE)                      
+ds <- 
+merge(ds, data_land_ice[,c("year","l_ice_mass_anom")],
+                        by = 'year', all.x=TRUE)    
+ds <- merge(ds, data_w_cons[,c("year", "water_cons")],
+                        by = 'year', all.x=TRUE)  
+ds <- merge(ds, data_ocean_temp_anom[,c("year", "oc_h_anom")],
+                        by = 'year', all.x=TRUE)  
+ds <- merge(ds, data_co2[,c("year", "co2_emiss")],
+                        by = 'year', all.x=TRUE)  
+ds <- merge(ds, data_oni[,c("year", "anom_c")],
+by = 'year', all.x=TRUE) 
+ds <- merge(ds, data_co2_emissions[,c("year", "total")],
+by = 'year', all.x=TRUE) 
+
+cor_ds <- round(cor(ds, use = "complete.obs"),2)                              
+cor_ds
+melted_ds <- melt(cor_ds)
+melted_ds
+ggplot(data = melted_ds, aes(x=Var1, y=Var2, fill=value)) + 
+  geom_tile()+
+  ggtitle("Sea level change factors")+ 
+theme(plot.title = element_text(size = 20, face = "bold"))+
+geom_text(aes(label = round(value, 3)))
+ggsave("Corellation_matrix.png")                     
+
+ds <- ds |> dplyr::select(-c("X"))
+write.csv(ds, 'DataCommon.csv')
+# write.csv(ds, 'DataCommonBackUp.csv')
+
+names(ds)[names(ds) == "anom_c"] <- "elnino_anom_c"
+View(ds)
+summary(ds)
+mode(ds$sea_level)
+glimpse(ds)
+```
+## cors
+```{R}
+ds <- read.csv("DataCommon.csv")
+ds
+cor_ds <- round(cor(ds, use = "complete.obs"),2)                              
+cor_ds
+melted_ds <- melt(cor_ds)
+melted_ds
+ggplot(data = melted_ds, aes(x=Var1, y=Var2, fill=value)) + 
+  geom_tile()+
+  # ggtitle("Sea level change factors")+ 
+theme(axis.title = element_blank(),axis.text.x=element_text(size = 13, angle = 90, vjust = 0.5, hjust=1), axis.text = element_text(size = 13), plot.title = element_text(size = 20, face = "bold"))+
+geom_text(aes(label = round(value, 3)))   
+ggsave("Cor_m.png")         
+```
+
+## Modeling
+```{R}
+ds_lm_data <- lm(sea_level ~ temp, data = ds_train)
+coef(ds_lm_data)
+summary(ds_lm_data)
+
+ds_fitted <- fitted.values(ds_lm_data)
+ds_fitted
+ds_aug <- augment(ds_lm_data)
+glimpse(ds_aug)
+view(ds_aug)
+
+pl <- ds_train |> ggplot(aes(x = temp, y = sea_level))
+pl + geom_point(color="black",size=3)+
+geom_smooth(method='lm', formula= y~x,color="blue", lwd=3)+
+labs(y="Sea level(m)", x="Avg. temp.(C)")+
+theme(axis.title = element_text(size = 18), axis.text = element_text(size = 14), plot.title = element_text(size = 20, face = "bold"))
+# panel.background = element_rect(fill='transparent'), #transparent panel bg
+#  plot.background = element_rect(fill='transparent', color= NA ), #transparent plot bg
+#  panel.grid.major = element_blank(), #remove major gridlines
+#  panel.grid.minor = element_blank(), #remove minor gridlines
+# #  axis.text.y = element_text(color = "white"),
+# #  axis.ticks.y = element_line(color = "white"),
+#   legend.text = element_blank(), #transparent legend bg
+#  legend.background = element_rect(fill='transparent'), #transparent legend bg
+#  legend.box.background = element_rect(fill='transparent'))
+
+ ggsave("sl_temp.png", bg="transparent")
+
+glimpse(ds)
+pl <- ds_train |> ggplot(aes(x = urb_pc, y = sea_level))
+pl + geom_point(color="black",size=3)+
+geom_smooth(method='lm', formula= y~x,color="blue", lwd=3)+
+labs(y="Sea level(m)", x="Urb. pop(%)")+
+theme(axis.title = element_text(size = 18), axis.text = element_text(size = 14), plot.title = element_text(size = 20, face = "bold"))
+# panel.background = element_rect(fill='transparent'), #transparent panel bg
+#  plot.background = element_rect(fill='transparent', color= NA ), #transparent plot bg
+#  panel.grid.major = element_blank(), #remove major gridlines
+#  panel.grid.minor = element_blank(), #remove minor gridlines
+# #  axis.text.y = element_text(color = "white"),
+# #  axis.ticks.y = element_line(color = "white"),
+#   legend.text = element_blank(), #transparent legend bg
+#  legend.background = element_rect(fill='transparent'), #transparent legend bg
+#  legend.box.background = element_rect(fill='transparent'))
+
+ ggsave("sl_urb_pc.png", bg="transparent")
+
+pl <- ds |> ggplot(aes(x = co2, y = sea_level))
+pl + geom_point(color="black",size=3)+
+geom_smooth(method='lm', formula= y~x,color="blue", lwd=3)+
+labs(y="Sea level(m)", x="CO2(m.t.)")+
+theme(axis.title = element_text(size = 18), axis.text = element_text(size = 14), plot.title = element_text(size = 20, face = "bold"))
+# panel.background = element_rect(fill='transparent'), #transparent panel bg
+#  plot.background = element_rect(fill='transparent', color= NA ), #transparent plot bg
+#  panel.grid.major = element_blank(), #remove major gridlines
+#  panel.grid.minor = element_blank(), #remove minor gridlines
+# #  axis.text.y = element_text(color = "white"),
+# #  axis.ticks.y = element_line(color = "white"),
+#   legend.text = element_blank(), #transparent legend bg
+#  legend.background = element_rect(fill='transparent'), #transparent legend bg
+#  legend.box.background = element_rect(fill='transparent'))
+
+ ggsave("sl_co2.png", bg="transparent")
+
+ pl <- ds |> ggplot(aes(x = co2_emiss, y = co2))
+pl + geom_point(color="black",size=3)+
+geom_smooth(method='lm', formula= y~x,color="blue", lwd=3)+
+labs(y="  C atm(m.t)", x="CO2 emiss(t.t.)")+
+theme(axis.title = element_text(size = 18), axis.text = element_text(size = 14), plot.title = element_text(size = 20, face = "bold"))
+# panel.background = element_rect(fill='transparent'), #transparent panel bg
+#  plot.background = element_rect(fill='transparent', color= NA ), #transparent plot bg
+#  panel.grid.major = element_blank(), #remove major gridlines
+#  panel.grid.minor = element_blank(), #remove minor gridlines
+# #  axis.text.y = element_text(color = "white"),
+# #  axis.ticks.y = element_line(color = "white"),
+#   legend.text = element_blank(), #transparent legend bg
+#  legend.background = element_rect(fill='transparent'), #transparent legend bg
+#  legend.box.background = element_rect(fill='transparent'))
+
+ ggsave("co2-co2_emiss.png", bg="transparent")
+
+
+pl <- ds |> ggplot(aes(x = temp, y = oc_h_anom))
+pl + geom_point(color="white",size=3)+
+geom_smooth(method='lm', formula= y~x,color="green", lwd=3)+
+theme(axis.title = element_text(size = 20), plot.title = element_text(size = 20, face = "bold"),
+# panel.background = element_rect(fill='transparent'), #transparent panel bg
+#  plot.background = element_rect(fill='transparent', color= NA ), #transparent plot bg
+#  panel.grid.major = element_blank(), #remove major gridlines
+#  panel.grid.minor = element_blank(), #remove minor gridlines
+# #  axis.text.y = element_text(color = "white"),
+# #  axis.ticks.y = element_line(color = "white"),
+#   legend.text = element_blank(), #transparent legend bg
+#  legend.background = element_rect(fill='transparent'), #transparent legend bg
+#  legend.box.background = element_rect(fill='transparent'))
+#  ggsave("sl-och.png", bg="transparent")
+```
+```{R}
+# modeling packages
+
+# Condition 1: Linear relationship
+p1 <- ggplot(ds_train, aes(temp, sea_level)) +
+  geom_point(size = 1, alpha = .4) +
+  geom_smooth(se = F) +
+  xlab('Temperature')
+p1
+
+df1 <- broom::augment(ds_cv_model1$finalModel, data = ds_train)
+glimpse(df1)
+p1 <- ggplot(df1, aes(.fitted, .std.resid)) +
+  geom_point(size = 1, alpha = .4) +
+  xlab('Predicted values') +
+  ylab('Residuals') +
+  ggtitle('Model 1', subtitle = 'sea_level ~ temp')
+p1
+
+p1 <- ggplot(df1, aes(year, .std.resid)) + 
+  geom_point(size = 1, alpha = .4) + 
+  xlab('Row ID') +
+  ylab('Residuals') +
+  ggtitle('Model 1', subtitle = 'Correlated residuals.')
+p1
+
+p2 <- ggplot(df1, aes(year)) + 
+  geom_line(aes(y=sea_level), color="green") + 
+  geom_line(aes(y=.fitted^2), color="red") + 
+  xlab('Year as Id') +
+  ggtitle('Model 1')
+p2
+
+p2 <- ggplot(ds_train, aes(temp, sea_level)) +
+  geom_point(size = 1, alpha = .4) +
+  geom_smooth(se = F) +
+  xlab('Temperature')
+p2
+
+df2 <- broom::augment(ds_cv_model2$finalModel, data = ds_train)
+glimpse(df2)
+p2 <- ggplot(df2, aes(.fitted, .std.resid)) +
+  geom_point(size = 1, alpha = .4) +
+  xlab('Predicted values') +
+  ylab('Residuals') +
+  ggtitle('Model 2', subtitle = 'sea_level ~ temp + co2_emiss')
+p2
+
+p2 <- ggplot(df2, aes(year, .std.resid)) + 
+  geom_point(size = 3, alpha = .7) + 
+  geom_smooth(method="lm") + 
+  xlab('Year as Id') +
+  ylab('Residuals') +
+  ggtitle('Model 2')
+p2
+
+p2 <- ggplot(df2, aes(year)) + 
+  geom_line(aes(y=sea_level), color="green", lwd=5) + 
+  geom_line(aes(y=.fitted), color="red", lwd=5) + 
+  xlab('Year as Id') +
+  ggtitle('Model 2')
+p2
+
+
+
+p2 <- ggplot(ds_train, aes(temp, sea_level)) +
+  geom_point(size = 1, alpha = .4) +
+  geom_smooth(se = F) +
+  xlab('Temperature')
+p2
+
+df3 <- broom::augment(ds_cv_model3$finalModel, data = ds_train)
+glimpse(df3)
+p2 <- ggplot(df3, aes(.fitted, .std.resid)) +
+  geom_point(size = 1, alpha = .4) +
+  xlab('Predicted values') +
+  ylab('Residuals') +
+  ggtitle('Model 3', subtitle = 'sea_level ~ temp + co2_emiss + urb_pc + oc_h_anom')
+p2
+
+p2 <- ggplot(df3, aes(year, .std.resid)) + 
+  geom_point(size = 3, alpha = .7) + 
+  geom_smooth(method="lm") +
+  geom_line(aes(y=0)) +  
+  xlab('Year as Id') +
+  ylab('Residuals') +
+  ggtitle('Model 3')
+p2
+
+p2 <- ggplot(df3, aes(year)) + 
+  geom_line(aes(y=sea_level), color="green", lwd=5) + 
+  geom_line(aes(y=.fitted), color="red", lwd=5) + 
+  xlab('Year as Id') +
+  ggtitle('Model 2')
+p2
+
+df_final <- broom::augment(ds_mod_back_bic$finalModel, data = ds_train)
+View(df_final)
+p2 <- ggplot(df_final, aes(year)) + 
+  geom_line(aes(y=sea_level), color="green", lwd=3) + 
+  geom_line(aes(y=.fitted), color="red", lwd=3) + 
+  xlab('Year as Id') +
+  ggtitle('Model f2')
+p2
+
+pairs(ds_train, cex.labels=1.2, col = "dodgerblue")
+
+ds_train_21$year <- ds_train$year
+ds_train_21$pred <-fitted(ds_big_mod_both_aic)
+p2 <- ggplot(ds_train_21, aes(year)) + 
+  geom_line(aes(y=sea_level), color="green", lwd=2) + 
+  geom_line(aes(y=exp(pred)), color="red", lwd=2) + 
+  xlab('Year as Id') +
+  ggtitle('Model ff')
+p2
+
+ds_test_21 <- ds_test |> select(-c('X', 'year','ch4', 'n2o', 'sf6', 'co2_emiss.x', 'l_ice_mass_anom', 'co2', 's_ice_ext_anom' ))
+length(ds_test)
+View(ds_test_21)
+View(ds_train_21)
+
+ds_test_21$year <- ds_test$year
+v <- predict(ds_big_mod_both_aic, newdata=ds_test_21)
+v
+ds_test_21$pred <-v
+p2 <- ggplot(ds_test_21, aes(year)) + 
+  geom_line(aes(y=sea_level), color="green", lwd=2) + 
+  geom_line(aes(y=exp(pred)), color="red", lwd=2) + 
+  xlab('Year as Id') +
+  ggtitle('Model ff test')
+p2
+
+sigma(ds_big_mod_both_bic)
+
+set.seed(123)
+(ds_cv_model3 <- train(
+  form = sea_level ~ temp + co2_emiss + urb_pc + oc_h_anom,
+  data = ds_train,
+  method = 'lm',
+  trControl = trainControl(method = 'cv', number = 10),
+  na.action=na.omit
+))
+```
