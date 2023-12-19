@@ -1,4 +1,4 @@
 # DS
-## student final project
-### Theme: Climate change review
-### Author: Cazac Mihail
+### Student final project
+Theme: Climate change review
+Author: Cazac Mihail
